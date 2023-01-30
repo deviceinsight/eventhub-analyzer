@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "event-hub-partitioning-analyzer"
+version = "0.1.0"
+description = ""
+authors = ["Stefan Hudelmaier <stefan.hudelmaier@device-insight.com>"]
+readme = "README.md"
+packages = [{include = "event_hub_partitioning_analyzer"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+azure-storage-blob = "^12.14.1"
+python-dotenv = "^0.21.1"
+jsonpickle = "^3.0.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
