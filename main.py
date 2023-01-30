@@ -10,44 +10,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-class EventHub:
-    def __init__(self, name, consumer_groups):
-        self.name = name
-        self.consumer_groups = consumer_groups
-
-    def get_checkpoints(self, consumer_group_name):
-        consumer_group = more_itertools.first_true(self.consumer_groups, default=None, pred=lambda name: name == consumer_group_name)
-        if consumer_group is None:
-            return None
-
-        return consumer_group.checkpoints
-
-
-class ConsumerGroup:
-    def __init__(self, name, checkpoints):
-        self.name = name
-        self.checkpoints = checkpoints
-
-
 class CheckpointData:
     def __init__(self, timestamp, event_hubs):
         self.timestamp = timestamp
         self.event_hubs = event_hubs
 
-    def get_checkpoints(self, event_hub_name, consumer_group_name):
-        event_hub = more_itertools.first_true(self.event_hubs, default=None, pred=lambda name: name == event_hub_name)
-        if event_hub is None:
-            return None
-
-        return event_hub.get_checkpoints(consumer_group_name)
-
-
 
 class Checkpoint:
-    def __init__(self, partition_id, sequence_number, offset):
+    def __init__(self, sequence_number, offset):
         self.offset = offset
         self.sequence_number = sequence_number
-        self.partition_id = partition_id
 
 
 class RawCheckpoint:
@@ -69,15 +41,28 @@ class Ownership:
 
 def run_checkpoint_anaylysis(current_timestamp, current_event_hubs, previous_timestamp, previous_event_hubs):
     difference_in_seconds = (current_timestamp - previous_timestamp).total_seconds()
-    for event_hub in current_event_hubs:
-        for consumer_group in event_hub.consumer_groups:
+    for event_hub_name in current_event_hubs:
+        for consumer_group_name in current_event_hubs[event_hub_name]:
+            for partition_id in current_event_hubs[event_hub_name][consumer_group_name]:
+                current_checkpoint = current_event_hubs[event_hub_name][consumer_group_name][partition_id]
+                try:
+                    previous_checkpoint = previous_event_hubs[event_hub_name][consumer_group_name][partition_id]
+                except KeyError:
+                    previous_checkpoint = None
 
+                if previous_checkpoint is None:
+                    print(f'{event_hub_name}/{consumer_group_name}/{partition_id}: No previous data')
+                    continue
 
+                sequence_delta = current_checkpoint.sequence_number - previous_checkpoint.sequence_number
+                offset_delta = current_checkpoint.offset - previous_checkpoint.offset
 
+                events_per_second = sequence_delta / difference_in_seconds
+                bytes_per_second = offset_delta / difference_in_seconds
+                print(f'{event_hub_name}/{consumer_group_name}/{partition_id}: {events_per_second:.2f} events per second, {bytes_per_second:.0f} bytes per second')
 
 
 def main():
-
     previous_data = load_persisted_data()
 
     connect_str = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
@@ -101,19 +86,21 @@ def main():
         if entity == 'ownership':
             ownerships.append(Ownership(event_hub_name, consumer_group_name, partition_id, blob.metadata['ownerid']))
 
-    event_hubs = []
+    event_hubs = {}
     raw_checkpoints_by_event_hub = itertools.groupby(raw_checkpoints, lambda c: c.event_hub)
     for event_hub_name, raw_checkpoints_of_event_hub in raw_checkpoints_by_event_hub:
+        if event_hub_name not in event_hubs:
+            event_hubs[event_hub_name] = {}
+
         raw_checkpoints_by_consumer_group = itertools.groupby(raw_checkpoints_of_event_hub, lambda c: c.consumer_group)
-        consumer_groups = []
         for consumer_group_name, raw_checkpoints_of_consumer_group in raw_checkpoints_by_consumer_group:
-            checkpoints = [Checkpoint(
-                partition_id=raw_checkpoint.partition_id,
-                offset=raw_checkpoint.offset,
-                sequence_number=raw_checkpoint.sequence_number) for raw_checkpoint in raw_checkpoints_of_consumer_group]
-            consumer_groups.append(ConsumerGroup(consumer_group_name, checkpoints=checkpoints))
-        event_hub = EventHub(event_hub_name, consumer_groups=consumer_groups)
-        event_hubs.append(event_hub)
+
+            checkpoints_by_partition_id = {}
+            for raw_checkpoint in raw_checkpoints_of_consumer_group:
+                checkpoints_by_partition_id[raw_checkpoint.partition_id] = Checkpoint(offset=raw_checkpoint.offset,
+                                                                                      sequence_number=raw_checkpoint.sequence_number)
+
+            event_hubs[event_hub_name][consumer_group_name] = checkpoints_by_partition_id
 
     print(jsonpickle.encode(event_hubs, indent=2))
 
