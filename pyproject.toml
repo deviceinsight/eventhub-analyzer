@@ -11,6 +11,7 @@ python = "^3.10"
 azure-storage-blob = "^12.14.1"
 python-dotenv = "^0.21.1"
 jsonpickle = "^3.0.1"
+more-itertools = "^9.0.0"
 
 
 [build-system]
