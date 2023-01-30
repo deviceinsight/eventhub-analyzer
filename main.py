@@ -97,13 +97,6 @@ def offset_analysis():
     else:
         previous_timestamp = datetime.datetime.fromisoformat(previous_data.timestamp)
         run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs)
-    """
-    # TODO: Group by event_hub, consumer group
-    ownership_by_owner_id = itertools.groupby(ownerships, lambda o: o.owner_id)
-    for owner_id, ownership in ownership_by_owner_id:
-        print(owner_id, len(list(ownership)))
-
-    """
 
 
 def get_data_from_container(entity_to_get):
@@ -159,6 +152,8 @@ def owner_analysis():
         ownerships_by_consumer_group = itertools.groupby(ownerships_of_event_hub, lambda c: c.consumer_group)
         for consumer_group_name, ownerships_of_consumer_group in ownerships_by_consumer_group:
 
+            click.echo(f"Event Hub: {event_hub_name}, Consumer Group: {consumer_group_name}")
+
             ownerships_by_owner_id = itertools.groupby(ownerships_of_consumer_group, lambda o: o.owner_id)
             owner_count = 0
             for owner_id, ownerships_of_owner in ownerships_by_owner_id:
@@ -166,6 +161,8 @@ def owner_analysis():
                 owner_count += 1
 
             click.echo(f"{owner_count} owners in total")
+            click.echo()
+
 
 @click.group()
 @click.option('--debug/--no-debug', default=False)
