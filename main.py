@@ -15,11 +15,12 @@ class EventHub:
         self.name = name
         self.consumer_groups = consumer_groups
 
-    def get_checkpoint(self, event_hub_name, consumer_group_name):
-        more_itertools.first_true(self.consumer_groups)
+    def get_checkpoints(self, consumer_group_name):
+        consumer_group = more_itertools.first_true(self.consumer_groups, default=None, pred=lambda name: name == consumer_group_name)
+        if consumer_group is None:
+            return None
 
-
-
+        return consumer_group.checkpoints
 
 
 class ConsumerGroup:
@@ -28,10 +29,18 @@ class ConsumerGroup:
         self.checkpoints = checkpoints
 
 
-class PersistedData:
+class CheckpointData:
     def __init__(self, timestamp, event_hubs):
         self.timestamp = timestamp
         self.event_hubs = event_hubs
+
+    def get_checkpoints(self, event_hub_name, consumer_group_name):
+        event_hub = more_itertools.first_true(self.event_hubs, default=None, pred=lambda name: name == event_hub_name)
+        if event_hub is None:
+            return None
+
+        return event_hub.get_checkpoints(consumer_group_name)
+
 
 
 class Checkpoint:
@@ -62,6 +71,7 @@ def run_checkpoint_anaylysis(current_timestamp, current_event_hubs, previous_tim
     difference_in_seconds = (current_timestamp - previous_timestamp).total_seconds()
     for event_hub in current_event_hubs:
         for consumer_group in event_hub.consumer_groups:
+
 
 
 
@@ -134,7 +144,7 @@ def main():
 
 def persist_data(event_hubs):
     timestamp = now().isoformat()
-    persisted_data = PersistedData(timestamp=timestamp, event_hubs=event_hubs)
+    persisted_data = CheckpointData(timestamp=timestamp, event_hubs=event_hubs)
     with open('data.json', 'w') as f:
         f.write(jsonpickle.encode(persisted_data, indent=2))
 
