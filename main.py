@@ -6,6 +6,7 @@ import more_itertools
 from azure.storage.blob import BlobServiceClient
 import itertools
 from dotenv import load_dotenv
+from texttable import Texttable
 
 load_dotenv()
 
@@ -39,27 +40,35 @@ class Ownership:
         self.event_hub = event_hub
 
 
-def run_checkpoint_anaylysis(current_timestamp, current_event_hubs, previous_timestamp, previous_event_hubs):
+def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_timestamp, previous_event_hubs):
     difference_in_seconds = (current_timestamp - previous_timestamp).total_seconds()
     for event_hub_name in current_event_hubs:
         for consumer_group_name in current_event_hubs[event_hub_name]:
+
+            print(f"Event Hub: {event_hub_name}, Consumer Group: {consumer_group_name}")
+
+            table = Texttable()
+            table.set_deco(Texttable.HEADER)
+            table.set_cols_dtype(['t',
+                                  't',
+                                  't',
+                                  'f'])
+            table.set_cols_align(["l", "l", "l", "r"])
+            table.add_row(["Event Hub", "Consumer Group", "Partition", "Events per second"])
             for partition_id in current_event_hubs[event_hub_name][consumer_group_name]:
                 current_checkpoint = current_event_hubs[event_hub_name][consumer_group_name][partition_id]
                 try:
                     previous_checkpoint = previous_event_hubs[event_hub_name][consumer_group_name][partition_id]
+                    sequence_delta = current_checkpoint.sequence_number - previous_checkpoint.sequence_number
+                    events_per_second = sequence_delta / difference_in_seconds
                 except KeyError:
-                    previous_checkpoint = None
+                    events_per_second = -1
 
-                if previous_checkpoint is None:
-                    print(f'{event_hub_name}/{consumer_group_name}/{partition_id}: No previous data')
-                    continue
+                table.add_row([event_hub_name, consumer_group_name, partition_id, events_per_second])
 
-                sequence_delta = current_checkpoint.sequence_number - previous_checkpoint.sequence_number
-                offset_delta = current_checkpoint.offset - previous_checkpoint.offset
+            print(table.draw())
+            print()
 
-                events_per_second = sequence_delta / difference_in_seconds
-                bytes_per_second = offset_delta / difference_in_seconds
-                print(f'{event_hub_name}/{consumer_group_name}/{partition_id}: {events_per_second:.2f} events per second, {bytes_per_second:.0f} bytes per second')
 
 
 def main():
@@ -102,14 +111,12 @@ def main():
 
             event_hubs[event_hub_name][consumer_group_name] = checkpoints_by_partition_id
 
-    print(jsonpickle.encode(event_hubs, indent=2))
-
     persist_data(event_hubs)
     if previous_data is None:
         print("No previous run found, cannot perform analysis. Wait a minute and run this command again.")
     else:
         previous_timestamp = datetime.datetime.fromisoformat(previous_data.timestamp)
-        run_checkpoint_anaylysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs)
+        run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs)
     """
     # TODO: Group by event_hub, consumer group
     ownership_by_owner_id = itertools.groupby(ownerships, lambda o: o.owner_id)
