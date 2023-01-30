@@ -1,8 +1,8 @@
 import os
 import datetime
 
+import click
 import jsonpickle
-import more_itertools
 from azure.storage.blob import BlobServiceClient
 import itertools
 from dotenv import load_dotenv
@@ -45,7 +45,7 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
     for event_hub_name in current_event_hubs:
         for consumer_group_name in current_event_hubs[event_hub_name]:
 
-            print(f"Event Hub: {event_hub_name}, Consumer Group: {consumer_group_name}")
+            click.echo(f"Event Hub: {event_hub_name}, Consumer Group: {consumer_group_name}")
 
             table = Texttable()
             table.set_deco(Texttable.HEADER)
@@ -66,34 +66,14 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
 
                 table.add_row([event_hub_name, consumer_group_name, partition_id, events_per_second])
 
-            print(table.draw())
-            print()
+            click.echo(table.draw())
+            click.echo()
 
 
-
-def main():
+def offset_analysis():
     previous_data = load_persisted_data()
 
-    connect_str = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
-    offset_container_name = os.getenv('CONTAINER_NAME')
-
-    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-    container_client = blob_service_client.get_container_client(container=offset_container_name)
-    blob_list = container_client.list_blobs(include='metadata')
-    raw_checkpoints = []
-    ownerships = []
-
-    for blob in blob_list:
-        name = blob.name
-        _, event_hub_name, consumer_group_name, entity, partition_id = name.split('/')
-
-        if entity == 'checkpoint':
-            raw_checkpoints.append(
-                RawCheckpoint(event_hub_name, consumer_group_name, partition_id, int(blob.metadata['sequencenumber']),
-                              int(blob.metadata['offset'])))
-
-        if entity == 'ownership':
-            ownerships.append(Ownership(event_hub_name, consumer_group_name, partition_id, blob.metadata['ownerid']))
+    raw_checkpoints = get_data_from_container('checkpoint')
 
     event_hubs = {}
     raw_checkpoints_by_event_hub = itertools.groupby(raw_checkpoints, lambda c: c.event_hub)
@@ -113,7 +93,7 @@ def main():
 
     persist_data(event_hubs)
     if previous_data is None:
-        print("No previous run found, cannot perform analysis. Wait a minute and run this command again.")
+        click.echo("No previous run found, cannot perform analysis. Wait a minute and run this command again.")
     else:
         previous_timestamp = datetime.datetime.fromisoformat(previous_data.timestamp)
         run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs)
@@ -123,17 +103,30 @@ def main():
     for owner_id, ownership in ownership_by_owner_id:
         print(owner_id, len(list(ownership)))
 
-    total_sequence_number = sum([checkpoint.sequence_number for checkpoint in checkpoints])
-    min_sequence_number = min([checkpoint.sequence_number for checkpoint in checkpoints])
-    max_sequence_number = max([checkpoint.sequence_number for checkpoint in checkpoints])
-    avg_sequence_number = total_sequence_number / len(checkpoints)
-
-    for checkpoint in checkpoints:
-        percentage = round((checkpoint.sequence_number / avg_sequence_number) * 100)
-        print(f"Partition {checkpoint.partition_id} has {percentage}% of average")
-
-    persist_checkpoints(checkpoints)
     """
+
+
+def get_data_from_container(entity_to_get):
+    connect_str = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
+    offset_container_name = os.getenv('CONTAINER_NAME')
+    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
+    container_client = blob_service_client.get_container_client(container=offset_container_name)
+    blob_list = container_client.list_blobs(include='metadata')
+    result = []
+    for blob in blob_list:
+        name = blob.name
+        _, event_hub_name, consumer_group_name, entity, partition_id = name.split('/')
+
+        if entity_to_get == entity == 'checkpoint':
+            sequence_number = int(blob.metadata['sequencenumber'])
+            offset = int(blob.metadata['offset'])
+            checkpoint = RawCheckpoint(event_hub_name, consumer_group_name, partition_id, sequence_number, offset)
+            result.append(checkpoint)
+
+        if entity_to_get == entity == 'ownership':
+            ownership = Ownership(event_hub_name, consumer_group_name, partition_id, blob.metadata['ownerid'])
+            result.append(ownership)
+    return result
 
 
 def persist_data(event_hubs):
@@ -154,8 +147,41 @@ def load_persisted_data():
         return jsonpickle.decode(f.read())
 
 
+def owner_analysis():
+    ownerships = get_data_from_container('ownership')
+
+    event_hubs = {}
+    ownerships_by_event_hub = itertools.groupby(ownerships, lambda c: c.event_hub)
+    for event_hub_name, ownerships_of_event_hub in ownerships_by_event_hub:
+        if event_hub_name not in event_hubs:
+            event_hubs[event_hub_name] = {}
+
+        ownerships_by_consumer_group = itertools.groupby(ownerships_of_event_hub, lambda c: c.consumer_group)
+        for consumer_group_name, ownerships_of_consumer_group in ownerships_by_consumer_group:
+
+            ownerships_by_owner_id = itertools.groupby(ownerships_of_consumer_group, lambda o: o.owner_id)
+            owner_count = 0
+            for owner_id, ownerships_of_owner in ownerships_by_owner_id:
+                click.echo(f"{owner_id} owns {len(list(ownerships_of_owner))} partitions")
+                owner_count += 1
+
+            click.echo(f"{owner_count} owners in total")
+
+@click.group()
+@click.option('--debug/--no-debug', default=False)
+def cli(debug):
+    click.echo(f"Debug mode is {'on' if debug else 'off'}")
+
+
+@cli.command()
+def offsets():
+    offset_analysis()
+
+
+@cli.command()
+def owners():
+    owner_analysis()
+
+
 if __name__ == '__main__':
-    main()
-    # persist_checkpoints(
-    #     [Checkpoint(event_hub='123', partition_id=0, consumer_group='456', offset=1, sequence_number=2)])
-    # load_persisted_checkpoints()
+    cli()
