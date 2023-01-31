@@ -51,11 +51,12 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
             table.set_deco(Texttable.HEADER)
             table.set_cols_dtype(['t',
                                   't',
-                                  't',
+                                  'i',
                                   'f'])
-            table.set_cols_align(["l", "l", "l", "r"])
+            table.set_cols_align(["l", "l", "r", "r"])
             table.add_row(["Event Hub", "Consumer Group", "Partition", "Events per second"])
-            for partition_id in current_event_hubs[event_hub_name][consumer_group_name]:
+            partition_ids = sorted(current_event_hubs[event_hub_name][consumer_group_name], key=lambda p: int(p))
+            for partition_id in partition_ids:
                 current_checkpoint = current_event_hubs[event_hub_name][consumer_group_name][partition_id]
                 try:
                     previous_checkpoint = previous_event_hubs[event_hub_name][consumer_group_name][partition_id]
@@ -70,10 +71,10 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
             click.echo()
 
 
-def offset_analysis():
+def offset_analysis(connection_string, container_name):
     previous_data = load_persisted_data()
 
-    raw_checkpoints = get_data_from_container('checkpoint')
+    raw_checkpoints = get_data_from_container('checkpoint', connection_string, container_name)
 
     event_hubs = {}
     raw_checkpoints_by_event_hub = itertools.groupby(raw_checkpoints, lambda c: c.event_hub)
@@ -86,8 +87,8 @@ def offset_analysis():
 
             checkpoints_by_partition_id = {}
             for raw_checkpoint in raw_checkpoints_of_consumer_group:
-                checkpoints_by_partition_id[raw_checkpoint.partition_id] = Checkpoint(offset=raw_checkpoint.offset,
-                                                                                      sequence_number=raw_checkpoint.sequence_number)
+                checkpoint = Checkpoint(offset=raw_checkpoint.offset, sequence_number=raw_checkpoint.sequence_number)
+                checkpoints_by_partition_id[raw_checkpoint.partition_id] = checkpoint
 
             event_hubs[event_hub_name][consumer_group_name] = checkpoints_by_partition_id
 
@@ -99,11 +100,9 @@ def offset_analysis():
         run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs)
 
 
-def get_data_from_container(entity_to_get):
-    connect_str = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
-    offset_container_name = os.getenv('CONTAINER_NAME')
-    blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-    container_client = blob_service_client.get_container_client(container=offset_container_name)
+def get_data_from_container(entity_to_get, connection_string, container_name):
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    container_client = blob_service_client.get_container_client(container=container_name)
     blob_list = container_client.list_blobs(include='metadata')
     result = []
     for blob in blob_list:
@@ -140,8 +139,8 @@ def load_persisted_data():
         return jsonpickle.decode(f.read())
 
 
-def owner_analysis():
-    ownerships = get_data_from_container('ownership')
+def owner_analysis(connection_string, container_name):
+    ownerships = get_data_from_container('ownership', connection_string, container_name)
 
     event_hubs = {}
     ownerships_by_event_hub = itertools.groupby(ownerships, lambda c: c.event_hub)
@@ -159,26 +158,42 @@ def owner_analysis():
             for owner_id, ownerships_of_owner in ownerships_by_owner_id:
                 click.echo(f"{owner_id} owns {len(list(ownerships_of_owner))} partitions")
                 owner_count += 1
-
             click.echo(f"{owner_count} owners in total")
             click.echo()
 
 
+class StdCommand(click.core.Command):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        conn_str_opt = click.core.Option(('-c', '--connection-string',),
+                                         required=True,
+                                         envvar='STORAGE_ACCOUNT_CONNECTION_STRING',
+                                         help='The connection string of the storage account. Can instead be given '
+                                              'using the STORAGE_ACCOUNT_CONNECTION_STRING environment variable.')
+
+        container_name_opt = click.core.Option(('-n', '--container-name',),
+                                               required=True,
+                                               envvar='CONTAINER_NAME',
+                                               help='The name of the container in which the event hub offsets are '
+                                                    'stored. Can instead be given using the CONTAINER_NAME '
+                                                    'environment variable.')
+        self.params.insert(0, conn_str_opt)
+        self.params.insert(1, container_name_opt)
+
+
 @click.group()
-@click.option('--debug/--no-debug', default=False)
-def cli(debug):
-    click.echo(f"Debug mode is {'on' if debug else 'off'}")
+def cli():
+    pass
 
 
-@cli.command()
-def offsets():
-    offset_analysis()
+@cli.command(cls=StdCommand, help="Analyze offsets per partition")
+def offsets(connection_string, container_name):
+    offset_analysis(connection_string, container_name)
 
 
-@cli.command()
-def owners():
-    owner_analysis()
+@cli.command(cls=StdCommand, help="Analyze owners of partitions")
+def owners(connection_string, container_name):
+    owner_analysis(connection_string, container_name)
 
 
-if __name__ == '__main__':
-    cli()
+cli()

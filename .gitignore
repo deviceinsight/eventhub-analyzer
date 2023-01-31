@@ -2,3 +2,6 @@
 .idea
 *.swp
 data.json
+/dist
+*.pyc
+__pycache__
