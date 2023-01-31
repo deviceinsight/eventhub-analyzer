@@ -177,6 +177,7 @@ class StdCommand(click.core.Command):
                                                help='The name of the container in which the event hub offsets are '
                                                     'stored. Can instead be given using the CONTAINER_NAME '
                                                     'environment variable.')
+
         self.params.insert(0, conn_str_opt)
         self.params.insert(1, container_name_opt)
 
