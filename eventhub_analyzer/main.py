@@ -40,10 +40,18 @@ class Ownership:
         self.event_hub = event_hub
 
 
-def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_timestamp, previous_event_hubs):
+def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_timestamp, previous_event_hubs,
+                            event_hub_filter, consumer_group_filter):
     difference_in_seconds = (current_timestamp - previous_timestamp).total_seconds()
     for event_hub_name in current_event_hubs:
+
+        if event_hub_filter is not None and event_hub_filter != event_hub_name:
+            continue
+
         for consumer_group_name in current_event_hubs[event_hub_name]:
+
+            if consumer_group_filter is not None and consumer_group_filter != consumer_group_name:
+                continue
 
             table = Texttable()
             table.set_deco(Texttable.HEADER)
@@ -64,13 +72,14 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
                 except KeyError:
                     events_per_second = -1
 
-                table.add_row([event_hub_name, consumer_group_name, partition_id, current_checkpoint.sequence_number, events_per_second])
+                table.add_row([event_hub_name, consumer_group_name, partition_id, current_checkpoint.sequence_number,
+                               events_per_second])
 
             click.echo(table.draw())
             click.echo()
 
 
-def offset_analysis(connection_string, container_name):
+def checkpoint_analysis(connection_string, container_name, event_hub_filter, consumer_group_filter):
     previous_data = load_persisted_data()
 
     raw_checkpoints = get_data_from_container('checkpoint', connection_string, container_name)
@@ -78,6 +87,7 @@ def offset_analysis(connection_string, container_name):
     event_hubs = {}
     raw_checkpoints_by_event_hub = itertools.groupby(raw_checkpoints, lambda c: c.event_hub)
     for event_hub_name, raw_checkpoints_of_event_hub in raw_checkpoints_by_event_hub:
+
         if event_hub_name not in event_hubs:
             event_hubs[event_hub_name] = {}
 
@@ -96,7 +106,8 @@ def offset_analysis(connection_string, container_name):
         click.echo("No previous run found, cannot perform analysis. Wait a minute and run this command again.")
     else:
         previous_timestamp = datetime.datetime.fromisoformat(previous_data.timestamp)
-        run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs)
+        run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs, event_hub_filter,
+                                consumer_group_filter)
 
 
 def get_data_from_container(entity_to_get, connection_string, container_name):
@@ -183,9 +194,16 @@ class StdCommand(click.core.Command):
                                           help='The name of the event hub to analyze. If not specified, show all '
                                                'event hubs.')
 
+        consumer_group_opt = click.core.Option(('-g', '--consumer-group',),
+                                               required=False,
+                                               envvar='CONSUMER_GROUP',
+                                               help='The name of the consumer group to analyze. If not specified, '
+                                                    'show all consumer groups.')
+
         self.params.insert(0, conn_str_opt)
         self.params.insert(1, container_name_opt)
         self.params.insert(2, event_hub_opt)
+        self.params.insert(3, consumer_group_opt)
 
 
 @click.group()
@@ -193,9 +211,9 @@ def cli():
     pass
 
 
-@cli.command(cls=StdCommand, help="Analyze sequence numbers per partition")
-def sequencenumbers(connection_string, container_name, event_hub):
-    offset_analysis(connection_string, container_name)
+@cli.command(cls=StdCommand, help="Analyze checkpoints per partition")
+def checkpoints(connection_string, container_name, event_hub, consumer_group):
+    checkpoint_analysis(connection_string, container_name, event_hub, consumer_group)
 
 
 @cli.command(cls=StdCommand, help="Analyze owners of partitions")
