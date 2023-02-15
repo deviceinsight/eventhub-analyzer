@@ -45,16 +45,15 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
     for event_hub_name in current_event_hubs:
         for consumer_group_name in current_event_hubs[event_hub_name]:
 
-            click.echo(f"Event Hub: {event_hub_name}, Consumer Group: {consumer_group_name}")
-
             table = Texttable()
             table.set_deco(Texttable.HEADER)
             table.set_cols_dtype(['t',
                                   't',
                                   'i',
+                                  'i',
                                   'f'])
-            table.set_cols_align(["l", "l", "r", "r"])
-            table.add_row(["Event Hub", "Consumer Group", "Partition", "Events per second"])
+            table.set_cols_align(["l", "l", "r", "r", "r"])
+            table.add_row(["Event Hub", "Consumer Group", "Partition", "Sequence number", "Events per second"])
             partition_ids = sorted(current_event_hubs[event_hub_name][consumer_group_name], key=lambda p: int(p))
             for partition_id in partition_ids:
                 current_checkpoint = current_event_hubs[event_hub_name][consumer_group_name][partition_id]
@@ -65,7 +64,7 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
                 except KeyError:
                     events_per_second = -1
 
-                table.add_row([event_hub_name, consumer_group_name, partition_id, events_per_second])
+                table.add_row([event_hub_name, consumer_group_name, partition_id, current_checkpoint.sequence_number, events_per_second])
 
             click.echo(table.draw())
             click.echo()
@@ -178,8 +177,15 @@ class StdCommand(click.core.Command):
                                                     'stored. Can instead be given using the CONTAINER_NAME '
                                                     'environment variable.')
 
+        event_hub_opt = click.core.Option(('-e', '--event-hub',),
+                                          required=False,
+                                          envvar='EVENT_HUB',
+                                          help='The name of the event hub to analyze. If not specified, show all '
+                                               'event hubs.')
+
         self.params.insert(0, conn_str_opt)
         self.params.insert(1, container_name_opt)
+        self.params.insert(2, event_hub_opt)
 
 
 @click.group()
@@ -187,13 +193,13 @@ def cli():
     pass
 
 
-@cli.command(cls=StdCommand, help="Analyze offsets per partition")
-def offsets(connection_string, container_name):
+@cli.command(cls=StdCommand, help="Analyze sequence numbers per partition")
+def sequencenumbers(connection_string, container_name, event_hub):
     offset_analysis(connection_string, container_name)
 
 
 @cli.command(cls=StdCommand, help="Analyze owners of partitions")
-def owners(connection_string, container_name):
+def owners(connection_string, container_name, event_hub):
     owner_analysis(connection_string, container_name)
 
 

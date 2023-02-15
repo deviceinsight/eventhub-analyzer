@@ -3,7 +3,7 @@
 Event Hub Analyzer is a small command line tool that can be used
 to analyze certain aspects of Event Hubs.
 
-## Offsets per partition
+## Sequence numbers per partition
 
 For every event hub, consumer group, the number of 
 events/sequence numbers between two invocations is retrieved and
@@ -18,7 +18,15 @@ with a higher cardinality as the partition key.
 ### Usage
 
 ```bash
-eventhub-analyzer offsets -n CONTAINER_NAME -c CONNECTION_STRING
+eventhub-analyzer sequencenumbers -n CONTAINER_NAME -c CONNECTION_STRING
+```
+
+You can also specify the settings via environment variables:
+
+```bash
+export STORAGE_ACCOUNT_CONNECTION_STRING='DefaultEndpointsProtocol=https;AccountName=x;AccountKey=y;EndpointSuffix=core.windows.net'
+export CONTAINER_NAME='event-hub-offsets'
+eventhub-analyzer sequencenumbers
 ```
 
 ### Example output
