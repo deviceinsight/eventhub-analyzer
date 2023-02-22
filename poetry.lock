@@ -21,6 +21,22 @@ typing-extensions = ">=4.0.1"
 aio = ["aiohttp (>=3.0)"]
 
 [[package]]
+name = "azure-eventhub"
+version = "5.11.1"
+description = "Microsoft Azure Event Hubs Client Library for Python"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "azure-eventhub-5.11.1.zip", hash = "sha256:675b5e9001e33b69157b983f32907553d9b7f29050f09d37fa90d97498337201"},
+    {file = "azure_eventhub-5.11.1-py3-none-any.whl", hash = "sha256:b18737417f8a713c1821e53459d2406090fd27515b6efca8d52060a103b02dac"},
+]
+
+[package.dependencies]
+azure-core = ">=1.14.0,<2.0.0"
+typing-extensions = ">=4.0.1"
+
+[[package]]
 name = "azure-storage-blob"
 version = "12.14.1"
 description = "Microsoft Azure Blob Storage Client Library for Python"
@@ -502,4 +518,4 @@ socks = ["PySocks (>=1.5.6,!=1.5.7,<2.0)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "af01694cde701c344918408db1d430893a1a695882b900bf519c3b8d2be5480e"
+content-hash = "3d93b3342798e62a6a7ce82cce8fe87ad191aba899aefaa96dacaf47554d7b95"

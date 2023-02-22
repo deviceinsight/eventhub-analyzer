@@ -4,6 +4,7 @@ import datetime
 import click
 import jsonpickle
 from azure.storage.blob import BlobServiceClient
+from azure.eventhub import EventHubConsumerClient
 import itertools
 from dotenv import load_dotenv
 from texttable import Texttable
@@ -84,6 +85,23 @@ def checkpoint_analysis(connection_string, container_name, event_hub_filter, con
 
     raw_checkpoints = get_data_from_container('checkpoint', connection_string, container_name)
 
+    event_hubs = group_raw_checkpoints(raw_checkpoints)
+
+    persist_data(event_hubs)
+    if previous_data is None:
+        click.echo("No previous run found, cannot perform analysis. Wait a minute and run this command again.")
+    else:
+        previous_timestamp = datetime.datetime.fromisoformat(previous_data.timestamp)
+        run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs, event_hub_filter,
+                                consumer_group_filter)
+
+
+def group_raw_checkpoints(raw_checkpoints):
+    """
+    Groups the checkpoints in nested dicts: event_hub -> consumer_group -> partition_id
+    :param raw_checkpoints:
+    :return:
+    """
     event_hubs = {}
     raw_checkpoints_by_event_hub = itertools.groupby(raw_checkpoints, lambda c: c.event_hub)
     for event_hub_name, raw_checkpoints_of_event_hub in raw_checkpoints_by_event_hub:
@@ -100,14 +118,50 @@ def checkpoint_analysis(connection_string, container_name, event_hub_filter, con
                 checkpoints_by_partition_id[raw_checkpoint.partition_id] = checkpoint
 
             event_hubs[event_hub_name][consumer_group_name] = checkpoints_by_partition_id
+    return event_hubs
 
-    persist_data(event_hubs)
-    if previous_data is None:
-        click.echo("No previous run found, cannot perform analysis. Wait a minute and run this command again.")
-    else:
-        previous_timestamp = datetime.datetime.fromisoformat(previous_data.timestamp)
-        run_checkpoint_analysis(now(), event_hubs, previous_timestamp, previous_data.event_hubs, event_hub_filter,
-                                consumer_group_filter)
+
+def lag_analysis(storage_connection_string, container_name, event_hub, consumer_group, event_hub_connection_string):
+    raw_checkpoints = get_data_from_container('checkpoint', storage_connection_string, container_name)
+    grouped_checkpoints = group_raw_checkpoints(raw_checkpoints)
+    print(grouped_checkpoints)
+    relevant_checkpoints = grouped_checkpoints[event_hub][consumer_group]
+
+    event_hub_client = EventHubConsumerClient.from_connection_string(event_hub_connection_string,
+                                                                     eventhub_name=event_hub,
+                                                                     consumer_group=consumer_group)
+
+    table = Texttable()
+    table.set_deco(Texttable.HEADER)
+    table.set_cols_dtype(['t',
+                          't',
+                          'i',
+                          'i',
+                          'i',
+                          'i'])
+    table.set_cols_align(["l", "l", "r", "r", "r", "r"])
+    table.add_row(["Event Hub",
+                   "Consumer Group",
+                   "Partition",
+                   "Read/Committed Sequence number",
+                   "Written/Enqueued Sequence Number",
+                   "Lag",
+                   ])
+    for partition_id in event_hub_client.get_partition_ids():
+        partition_properties = event_hub_client.get_partition_properties(partition_id)
+        read_sequence_number = relevant_checkpoints[partition_id].sequence_number
+        written_sequence_number = partition_properties['last_enqueued_sequence_number']
+        lag = written_sequence_number - read_sequence_number
+
+        table.add_row([event_hub,
+                       consumer_group,
+                       partition_id,
+                       read_sequence_number,
+                       written_sequence_number,
+                       lag])
+
+    click.echo(table.draw())
+    click.echo()
 
 
 def get_data_from_container(entity_to_get, connection_string, container_name):
@@ -172,38 +226,43 @@ def owner_analysis(connection_string, container_name):
             click.echo()
 
 
-class StdCommand(click.core.Command):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        conn_str_opt = click.core.Option(('-c', '--connection-string',),
-                                         required=True,
-                                         envvar='STORAGE_ACCOUNT_CONNECTION_STRING',
-                                         help='The connection string of the storage account. Can instead be given '
-                                              'using the STORAGE_ACCOUNT_CONNECTION_STRING environment variable.')
+def event_hub_option(function, *args, **kwargs):
+    function = click.option('-e', '--event-hub', *args, required=False,
+                            envvar='EVENT_HUB',
+                            help='The name of the event hub to analyze. If not specified, show all '
+                                 'event hubs.', **kwargs)(function)
 
-        container_name_opt = click.core.Option(('-n', '--container-name',),
-                                               required=True,
-                                               envvar='CONTAINER_NAME',
-                                               help='The name of the container in which the event hub offsets are '
-                                                    'stored. Can instead be given using the CONTAINER_NAME '
-                                                    'environment variable.')
+    return function
 
-        event_hub_opt = click.core.Option(('-e', '--event-hub',),
-                                          required=False,
-                                          envvar='EVENT_HUB',
-                                          help='The name of the event hub to analyze. If not specified, show all '
-                                               'event hubs.')
 
-        consumer_group_opt = click.core.Option(('-g', '--consumer-group',),
-                                               required=False,
-                                               envvar='CONSUMER_GROUP',
-                                               help='The name of the consumer group to analyze. If not specified, '
-                                                    'show all consumer groups.')
+def connection_string_option(function):
+    function = click.option('-c', '--connection-string', required=True,
+                            envvar='STORAGE_ACCOUNT_CONNECTION_STRING',
+                            help='The connection string of the storage account. Can instead be given '
+                                 'using the STORAGE_ACCOUNT_CONNECTION_STRING environment variable.')(function)
 
-        self.params.insert(0, conn_str_opt)
-        self.params.insert(1, container_name_opt)
-        self.params.insert(2, event_hub_opt)
-        self.params.insert(3, consumer_group_opt)
+    return function
+
+
+def container_name_option(function):
+    function = click.option('-n', '--container-name',
+                            required=True,
+                            envvar='CONTAINER_NAME',
+                            help='The name of the container in which the event hub offsets are '
+                                 'stored. Can instead be given using the CONTAINER_NAME '
+                                 'environment variable.')(function)
+
+    return function
+
+
+def consumer_group_option(function):
+    function = click.option('-g', '--consumer-group',
+                            required=False,
+                            envvar='CONSUMER_GROUP',
+                            help='The name of the consumer group to analyze. If not specified, '
+                                 'show all consumer groups.')(function)
+
+    return function
 
 
 @click.group()
@@ -211,14 +270,33 @@ def cli():
     pass
 
 
-@cli.command(cls=StdCommand, help="Analyze checkpoints per partition")
+@connection_string_option
+@consumer_group_option
+@event_hub_option
+@container_name_option
+@cli.command(help="Analyze checkpoints per partition")
 def checkpoints(connection_string, container_name, event_hub, consumer_group):
     checkpoint_analysis(connection_string, container_name, event_hub, consumer_group)
 
 
-@cli.command(cls=StdCommand, help="Analyze owners of partitions")
+@connection_string_option
+@consumer_group_option
+@event_hub_option
+@container_name_option
+@cli.command(help="Analyze owners of partitions")
 def owners(connection_string, container_name, event_hub):
     owner_analysis(connection_string, container_name)
+
+
+@connection_string_option
+@container_name_option
+@click.option('-e', '--event-hub', required=True, envvar='EVENT_HUB', help='The name of the event hub to analyze.')
+@click.option('-g', '--consumer-group', required=True, envvar='CONSUMER_GROUP',
+              help='The name of the consumer group to analyze.')
+@click.option('-E', '--event-hub-connection-string', envvar='EVENT_HUB_CONNECTION_STRING', )
+@cli.command(help="Analyze lag")
+def lags(connection_string, container_name, event_hub, consumer_group, event_hub_connection_string):
+    lag_analysis(connection_string, container_name, event_hub, consumer_group, event_hub_connection_string)
 
 
 cli()
