@@ -49,3 +49,10 @@ As you can see, partition 3 is not getting any events and
 the number of events is not well distributed overall. There
 might be some gains possible by choosing a different partition key
 (or by partitioning manually on the client).
+
+## Publishing
+
+```
+poetry build
+poetry publish
+```
