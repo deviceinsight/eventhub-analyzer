@@ -3,6 +3,12 @@
 Event Hub Analyzer is a small command line tool that can be used
 to analyze certain aspects of Event Hubs.
 
+## Installation
+
+```
+pip install eventhub-analyzer
+```
+
 ## Checkpoints per partition
 
 For every event hub, consumer group, the number of 
@@ -49,6 +55,14 @@ As you can see, partition 3 is not getting any events and
 the number of events is not well distributed overall. There
 might be some gains possible by choosing a different partition key
 (or by partitioning manually on the client).
+
+### Clearing checkpoints
+
+Example:
+
+```bash
+eventhub-analyzer clear-checkpoints --consumer-group redis-timeseries
+```
 
 ## Publishing
 

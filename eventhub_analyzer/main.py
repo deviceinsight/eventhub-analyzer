@@ -96,6 +96,22 @@ def checkpoint_analysis(connection_string, container_name, event_hub_filter, con
                                 consumer_group_filter)
 
 
+def clear_checkpoint_operation(connection_string, container_name, event_hub_filter, consumer_group_filter):
+    if consumer_group_filter is None:
+        print("You must specify a consumer group")
+        return
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    container_client = blob_service_client.get_container_client(container=container_name)
+    blob_list = container_client.list_blobs(include='metadata')
+    for blob in blob_list:
+        name = blob.name
+        _, event_hub_name, consumer_group_name, entity, partition_id = name.split('/')
+        if consumer_group_name == consumer_group_filter and entity == 'checkpoint':
+            print(f"Deleting blob: {name}")
+            blob_client = blob_service_client.get_blob_client(container=container_name, blob=name)
+            blob_client.delete_blob()
+
+
 def group_raw_checkpoints(raw_checkpoints):
     """
     Groups the checkpoints in nested dicts: event_hub -> consumer_group -> partition_id
@@ -148,6 +164,7 @@ def lag_analysis(storage_connection_string, container_name, event_hub, consumer_
                    "Lag",
                    ])
     for partition_id in event_hub_client.get_partition_ids():
+        print(f"Getting data for partition {partition_id}")
         partition_properties = event_hub_client.get_partition_properties(partition_id)
         read_sequence_number = relevant_checkpoints[partition_id].sequence_number
         written_sequence_number = partition_properties['last_enqueued_sequence_number']
@@ -174,8 +191,8 @@ def get_data_from_container(entity_to_get, connection_string, container_name):
         _, event_hub_name, consumer_group_name, entity, partition_id = name.split('/')
 
         if entity_to_get == entity == 'checkpoint':
-            sequence_number = int(blob.metadata['sequencenumber'])
-            offset = int(blob.metadata['offset'])
+            sequence_number = int(blob.metadata['sequencenumber']) if blob.metadata is not None else 0
+            offset = int(blob.metadata['offset']) if blob.metadata is not None else 0
             checkpoint = RawCheckpoint(event_hub_name, consumer_group_name, partition_id, sequence_number, offset)
             result.append(checkpoint)
 
@@ -277,6 +294,15 @@ def cli():
 @cli.command(help="Analyze checkpoints per partition")
 def checkpoints(connection_string, container_name, event_hub, consumer_group):
     checkpoint_analysis(connection_string, container_name, event_hub, consumer_group)
+
+
+@connection_string_option
+@consumer_group_option
+@event_hub_option
+@container_name_option
+@cli.command(help="Clear checkpoints")
+def clear_checkpoints(connection_string, container_name, event_hub, consumer_group):
+    clear_checkpoint_operation(connection_string, container_name, event_hub, consumer_group)
 
 
 @connection_string_option
