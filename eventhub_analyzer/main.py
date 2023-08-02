@@ -1,5 +1,6 @@
 import os
 import datetime
+import statistics
 
 import click
 import jsonpickle
@@ -64,12 +65,14 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
             table.set_cols_align(["l", "l", "r", "r", "r"])
             table.add_row(["Event Hub", "Consumer Group", "Partition", "Sequence number", "Events per second"])
             partition_ids = sorted(current_event_hubs[event_hub_name][consumer_group_name], key=lambda p: int(p))
+            events_per_seconds_stats = []
             for partition_id in partition_ids:
                 current_checkpoint = current_event_hubs[event_hub_name][consumer_group_name][partition_id]
                 try:
                     previous_checkpoint = previous_event_hubs[event_hub_name][consumer_group_name][partition_id]
                     sequence_delta = current_checkpoint.sequence_number - previous_checkpoint.sequence_number
                     events_per_second = sequence_delta / difference_in_seconds
+                    events_per_seconds_stats.append(events_per_second)
                 except KeyError:
                     events_per_second = -1
 
@@ -77,6 +80,12 @@ def run_checkpoint_analysis(current_timestamp, current_event_hubs, previous_time
                                events_per_second])
 
             click.echo(table.draw())
+            click.echo()
+            click.echo("Events per second stats:")
+            click.echo(f"Min: {min(events_per_seconds_stats):.3f}")
+            click.echo(f"Max: {max(events_per_seconds_stats):.3f}")
+            click.echo(f"Avg: {sum(events_per_seconds_stats) / len(events_per_seconds_stats):.3f}")
+            click.echo(f"StdDev: {statistics.stdev(events_per_seconds_stats):.3f}")
             click.echo()
 
 
@@ -306,7 +315,6 @@ def clear_checkpoints(connection_string, container_name, event_hub, consumer_gro
 
 
 @connection_string_option
-@consumer_group_option
 @event_hub_option
 @container_name_option
 @cli.command(help="Analyze owners of partitions")
